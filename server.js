@@ -35,7 +35,31 @@ const authenticateJWT = (req, res, next) => {
         next();
     });
 };
+// New Registration Endpoint
+app.post('/api/register', async (req, res) => {
+    const { companyName, username, password, whatsapp } = req.body;
+    
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // 1. Create Company (Set status to unpaid_lockout until PayFast confirms)
+        const [compResult] = await db.execute(
+            'INSERT INTO companies (name, whatsapp_number, subscription_status) VALUES (?, ?, ?)',
+            [companyName, whatsapp, 'unpaid_lockout']
+        );
+        const companyId = compResult.insertId;
 
+        // 2. Create Admin User
+        await db.execute(
+            'INSERT INTO users (company_id, username, password_hash, role) VALUES (?, ?, ?, ?)',
+            [companyId, username, hashedPassword, 'admin']
+        );
+
+        res.json({ success: true, company_id: companyId });
+    } catch (err) {
+        res.status(500).json({ error: "Username already exists or database error" });
+    }
+});
 // -----------------------------------------
 // ROUTE: Login
 // -----------------------------------------
