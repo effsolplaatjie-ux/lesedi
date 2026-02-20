@@ -35,19 +35,50 @@ const authenticateJWT = (req, res, next) => {
         next();
     });
 };
-// New Registration Endpoint
-app.post('/api/register', async (req, res) => {
-    const { companyName, username, password, whatsapp } = req.body;
-    
+
+app.post('/api/policies/create', authenticateToken, async (req, res) => {
+    const { type, hName, hID, hContact, hAddress, bName, bID } = req.body;
+    const companyId = req.user.company_id; // Taken from JWT
+    const policyNo = 'POL' + Math.floor(Math.random() * 1000000);
+
     try {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        
-        // 1. Create Company (Set status to unpaid_lockout until PayFast confirms)
-        const [compResult] = await db.execute(
-            'INSERT INTO companies (name, whatsapp_number, subscription_status) VALUES (?, ?, ?)',
-            [companyName, whatsapp, 'unpaid_lockout']
+        await db.execute(
+            `INSERT INTO policies (company_id, policy_no, policy_type, holder_name, holder_id_number, holder_contact, holder_address, beneficiary_name, beneficiary_id_number) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [companyId, policyNo, type, hName, hID, hContact, hAddress, bName, bID]
         );
-        const companyId = compResult.insertId;
+        res.status(201).json({ message: "Policy Created" });
+    } catch (err) {
+        res.status(500).json({ error: "Database error" });
+    }
+});
+// --- NEW POLICY ROUTE (Fixes the 404 Error) ---
+app.post('/api/policies/create', authenticateJWT, async (req, res) => {
+    const { type, hName, hID, hContact, hAddress, bName, bID, bContact, bAddress, dob } = req.body;
+    const company_id = req.user.company_id;
+    
+    // Auto-generate a unique policy number
+    const policy_no = `POL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    try {
+        await db.execute(
+            `INSERT INTO policies (company_id, policy_no, policy_type, holder_name, holder_id_number, 
+             holder_contact, holder_address, holder_dob, beneficiary_name, beneficiary_id_number, 
+             beneficiary_contact, beneficiary_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [company_id, policy_no, type, hName, hID, hContact, hAddress, dob, bName, bID, bContact, bAddress]
+        );
+        res.json({ success: true, policy_no });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to create policy." });
+    }
+});
+
+// --- GET COMPANY INFO (For Self-Service Link) ---
+app.get('/api/company-info', authenticateJWT, async (req, res) => {
+    const [rows] = await db.execute('SELECT id, name, has_self_service FROM companies WHERE id = ?', [req.user.company_id]);
+    res.json(rows[0]);
+});
 
         // 2. Create Admin User
         await db.execute(
