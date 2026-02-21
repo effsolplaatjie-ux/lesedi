@@ -72,7 +72,31 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 2. CREATE POLICY (Fixes "beneficiary_contact" default value error)
+// 2. EMPLOYEES
+app.post('/api/employees/add', authenticateToken, async (req, res) => {
+    const { username, password, role } = req.body;
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        await db.execute(
+            'INSERT INTO users (username, password_hash, role, company_id) VALUES (?, ?, ?, ?)',
+            [username, hash, role || 'staff', req.user.company_id]
+        );
+        res.status(201).json({ message: "Employee added successfully!" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to add employee: " + err.message });
+    }
+});
+
+app.get('/api/employees', authenticateToken, async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT id, username, role FROM users WHERE company_id = ?', [req.user.company_id]);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: "Fetch failed" });
+    }
+});
+
+// 3. POLICIES
 app.post('/api/policies/create', authenticateToken, async (req, res) => {
     const { type, hName, hID, hContact, hAddress, bName, bID, bContact, bAddress } = req.body;
     const policyNo = 'POL-' + Date.now().toString().slice(-6);
@@ -88,32 +112,35 @@ app.post('/api/policies/create', authenticateToken, async (req, res) => {
     }
 });
 
-// 1. ADD EMPLOYEE (Fixes the 404 in your screenshot)
-app.post('/api/employees/add', authenticateToken, async (req, res) => {
-    const { username, password, role } = req.body;
+app.get('/api/policies', authenticateToken, async (req, res) => {
     try {
-        const hash = await bcrypt.hash(password, 10);
-        await db.execute(
-            'INSERT INTO users (username, password_hash, role, company_id) VALUES (?, ?, ?, ?)',
-            [username, hash, role || 'staff', req.user.company_id]
-        );
-        res.status(201).json({ message: "Employee added successfully!" });
-    } catch (err) {
-        res.status(500).json({ error: "Failed to add employee: " + err.message });
-    }
-});
-
-// 2. GET EMPLOYEES
-app.get('/api/employees', authenticateToken, async (req, res) => {
-    try {
-        const [rows] = await db.execute('SELECT id, username, role FROM users WHERE company_id = ?', [req.user.company_id]);
+        const [rows] = await db.execute('SELECT * FROM policies WHERE company_id = ?', [req.user.company_id]);
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: "Fetch failed" });
+        res.status(500).json({ error: err.message });
     }
 });
 
-// 5. SMS ROUTES (Welcome & Reminder)
+// 4. CLAIMS UPLOAD
+app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No file selected." });
+        
+        const { policy_no } = req.body;
+        if (!policy_no) return res.status(400).json({ error: "Policy number is missing." });
+
+        await db.execute(
+            'INSERT INTO claims (policy_no, file_path) VALUES (?, ?)',
+            [policy_no, req.file.path]
+        );
+
+        res.json({ message: "Claim submitted successfully!", filePath: req.file.path });
+    } catch (err) {
+        res.status(500).json({ error: "Upload failed: " + err.message });
+    }
+});
+
+// 5. SMS
 app.post('/api/sms/welcome', authenticateToken, async (req, res) => {
     const { hContact, hName } = req.body;
     try {
@@ -130,6 +157,7 @@ app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
     const { policy_id } = req.body;
     try {
         const [rows] = await db.execute('SELECT holder_name, holder_contact FROM policies WHERE id = ?', [policy_id]);
+        if (rows.length === 0) return res.status(404).json({ error: "Policy not found" });
         const p = rows[0];
         await client.messages.create({
             body: `Hi ${p.holder_name}, reminder to keep your Lesedi Life policy up to date.`,
@@ -140,52 +168,5 @@ app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/policies', authenticateToken, async (req, res) => {
-    const [rows] = await db.execute('SELECT * FROM policies WHERE company_id = ?', [req.user.company_id]);
-    res.json(rows);
-});
-
-
-
-// --- UPDATED CLAIMS UPLOAD ROUTE ---
-app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: "No file selected. Please choose a document." });
-        }
-
-        const { policy_no } = req.body;
-        if (!policy_no) {
-            return res.status(400).json({ error: "Policy number is missing from the request." });
-        }
-
-        // Save the file reference to the new 'claims' table
-        await db.execute(
-            'INSERT INTO claims (policy_no, file_path) VALUES (?, ?)',
-            [policy_no, req.file.path]
-        );
-
-        res.json({ 
-            message: "Claim submitted successfully!", 
-            filePath: req.file.path 
-        });
-    } catch (err) {
-        console.error("Database Error during upload:", err.message);
-        res.status(500).json({ error: "Server failed to save claim: " + err.message });
-    }
-});// Make sure your form sends policy_no
-
-        // Save reference to the database
-        await db.execute(
-            'INSERT INTO claims (policy_no, file_path) VALUES (?, ?)',
-            [policy_no, req.file.path]
-        );
-
-        res.json({ message: "Claim submitted successfully!", path: req.file.path });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Upload failed: " + err.message });
-    }
-});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
