@@ -16,6 +16,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "jwt-simple": "^0.5.6",
+    "multer": "^2.0.2",
     "mysql2": "^3.17.4",
     "node-cron": "^4.2.1",
     "twilio": "^5.12.2"

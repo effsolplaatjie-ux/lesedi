@@ -19,6 +19,30 @@ const db = mysql.createPool({
     ssl: { rejectUnauthorized: true }
 });
 
+const multer = require('multer');
+const path = require('path');
+
+// Configure where to save uploaded claim docs
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, 'uploads/'), 
+    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+});
+const upload = multer({ storage: storage });
+
+// THE CLAIMS UPLOAD ROUTE
+app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        // Save the file path to your database (Make sure you have a claims table!)
+        // await db.execute('INSERT INTO claims (policy_id, file_path) VALUES (?, ?)', [req.body.policy_id, req.file.path]);
+
+        res.json({ message: "Document uploaded successfully!", filePath: req.file.path });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- AUTHENTICATION MIDDLEWARE ---
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
