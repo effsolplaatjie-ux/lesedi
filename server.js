@@ -26,7 +26,8 @@ const db = mysql.createPool({
 const client = new twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const formatPhone = (phone) => {
-    let cleaned = phone.replace(/\s+/g, '');
+    if (!phone) return '';
+    let cleaned = phone.toString().replace(/\s+/g, '');
     if (cleaned.startsWith('0')) return '+27' + cleaned.substring(1);
     if (cleaned.startsWith('27')) return '+' + cleaned;
     if (!cleaned.startsWith('+')) return '+27' + cleaned;
@@ -55,6 +56,27 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // --- ROUTES ---
+
+// 0. REGISTER (Missing from original)
+app.post('/api/register', async (req, res) => {
+    const { companyName, username, password, whatsapp } = req.body;
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        const [compResult] = await db.execute(
+            'INSERT INTO companies (name, whatsapp) VALUES (?, ?)', 
+            [companyName, whatsapp]
+        );
+        const companyId = compResult.insertId;
+
+        await db.execute(
+            'INSERT INTO users (username, password_hash, role, company_id) VALUES (?, ?, ?, ?)',
+            [username, hash, 'admin', companyId]
+        );
+        res.status(201).json({ message: "Registration successful!", company_id: companyId });
+    } catch (err) {
+        res.status(500).json({ error: "Registration failed: " + err.message });
+    }
+});
 
 // 1. LOGIN
 app.post('/api/login', async (req, res) => {
@@ -125,7 +147,6 @@ app.get('/api/policies', authenticateToken, async (req, res) => {
 // --- NEW: BILLING STATUS ROUTE ---
 app.get('/api/billing/status', authenticateToken, async (req, res) => {
     try {
-        // This assumes you have a 'companies' table with a 'status' column
         const [rows] = await db.execute(
             'SELECT subscription_status, last_payment_date FROM companies WHERE id = ?', 
             [req.user.company_id]
@@ -183,15 +204,25 @@ app.post('/api/sms/welcome', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
-    const { policy_id } = req.body;
+    const { policy_id, contact, name, policy } = req.body;
     try {
-        const [rows] = await db.execute('SELECT holder_name, holder_contact FROM policies WHERE id = ?', [policy_id]);
-        if (rows.length === 0) return res.status(404).json({ error: "Policy not found" });
-        const p = rows[0];
+        let targetPhone = contact;
+        let targetName = name;
+        let targetPolicy = policy;
+
+        // If frontend sends an ID instead of full details, look it up
+        if (policy_id) {
+            const [rows] = await db.execute('SELECT holder_name, holder_contact, policy_no FROM policies WHERE id = ?', [policy_id]);
+            if (rows.length === 0) return res.status(404).json({ error: "Policy not found" });
+            targetPhone = rows[0].holder_contact;
+            targetName = rows[0].holder_name;
+            targetPolicy = rows[0].policy_no;
+        }
+
         await client.messages.create({
-            body: `Hi ${p.holder_name}, reminder to keep your Lesedi Life policy up to date.`,
+            body: `Hi ${targetName}, reminder to keep your Lesedi Life policy (${targetPolicy}) up to date.`,
             from: process.env.TWILIO_PHONE_NUMBER,
-            to: formatPhone(p.holder_contact)
+            to: formatPhone(targetPhone)
         });
         res.json({ message: "Reminder sent!" });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -201,7 +232,6 @@ app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
 app.put('/api/policies/status', authenticateToken, async (req, res) => {
     const { id, status } = req.body;
     try {
-        // Ensure the policy belongs to the logged-in company
         await db.execute(
             'UPDATE policies SET payment_status = ? WHERE id = ? AND company_id = ?',
             [status, id, req.user.company_id]
