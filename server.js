@@ -23,9 +23,7 @@ const db = mysql.createPool({
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-
     if (!token) return res.status(401).json({ error: "Access Denied" });
-
     try {
         const decoded = jwt.decode(token, process.env.JWT_SECRET);
         req.user = decoded;
@@ -43,11 +41,9 @@ app.post('/api/login', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT * FROM users WHERE username = ?', [username]);
         if (rows.length === 0) return res.status(404).json({ error: "User not found" });
-
         const user = rows[0];
         const validPass = await bcrypt.compare(password, user.password_hash);
         if (!validPass) return res.status(401).json({ error: "Invalid password" });
-
         const token = jwt.encode({ id: user.id, company_id: user.company_id, role: user.role }, process.env.JWT_SECRET);
         res.json({ token, role: user.role, company_id: user.company_id });
     } catch (err) {
@@ -55,17 +51,16 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 2. CREATE POLICY (BACKEND STORAGE)
+// 2. CREATE POLICY
 app.post('/api/policies/create', authenticateToken, async (req, res) => {
-    const { type, hName, hID, hContact, hAddress, bName, bID } = req.body;
+    const { type, hName, hID, hContact, hAddress, bName, bID, bContact, bAddress } = req.body;
     const companyId = req.user.company_id;
     const policyNo = 'POL-' + Date.now().toString().slice(-6);
-
     try {
         await db.execute(
-            `INSERT INTO policies (company_id, policy_no, policy_type, holder_name, holder_id_number, holder_contact, holder_address, beneficiary_name, beneficiary_id_number) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [companyId, policyNo, type, hName, hID, hContact, hAddress, bName, bID]
+            `INSERT INTO policies (company_id, policy_no, policy_type, holder_name, holder_id_number, holder_contact, holder_address, beneficiary_name, beneficiary_id_number, beneficiary_contact, beneficiary_address) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [companyId, policyNo, type, hName, hID, hContact, hAddress, bName, bID, bContact, bAddress]
         );
         res.status(201).json({ message: "Policy saved successfully", policy_no: policyNo });
     } catch (err) {
@@ -73,7 +68,30 @@ app.post('/api/policies/create', authenticateToken, async (req, res) => {
     }
 });
 
-// 3. GET POLICIES
+// 3. SMS WELCOME ROUTE
+app.post('/api/sms/welcome', authenticateToken, async (req, res) => {
+    const { hContact, hName } = req.body;
+    const msg = `Welcome to Lesedi Life, ${hName}! Your policy has been successfully activated.`;
+    console.log(`Sending Welcome SMS to ${hContact}: ${msg}`);
+    // Add your SMS Provider API logic here
+    res.json({ message: "Welcome SMS Sent" });
+});
+
+// 4. SMS REMINDER ROUTE
+app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
+    const { policy_id } = req.body;
+    try {
+        const [rows] = await db.execute('SELECT holder_name, holder_contact, policy_no FROM policies WHERE id = ?', [policy_id]);
+        if (rows.length === 0) return res.status(404).json({ error: "Policy not found" });
+        const p = rows[0];
+        const msg = `Hi ${p.holder_name}, this is a reminder to keep your policy ${p.policy_no} up to date.`;
+        console.log(`Sending Reminder SMS to ${p.holder_contact}: ${msg}`);
+        res.json({ message: "Reminder SMS Sent" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/policies', authenticateToken, async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT * FROM policies WHERE company_id = ?', [req.user.company_id]);
@@ -83,7 +101,6 @@ app.get('/api/policies', authenticateToken, async (req, res) => {
     }
 });
 
-// 4. GET COMPANY INFO (FOR PUBLIC PORTAL LINK)
 app.get('/api/company-info', authenticateToken, async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT id, name, whatsapp_number FROM companies WHERE id = ?', [req.user.company_id]);
@@ -93,11 +110,9 @@ app.get('/api/company-info', authenticateToken, async (req, res) => {
     }
 });
 
-// 5. PUBLIC CREATE (FOR SELF-SERVICE PORTAL)
 app.post('/api/policies/public-create', async (req, res) => {
     const { company_id, hName, hID, hContact, hAddress, bName, bID } = req.body;
     const policyNo = 'PUB-' + Date.now().toString().slice(-6);
-
     try {
         await db.execute(
             `INSERT INTO policies (company_id, policy_no, policy_type, holder_name, holder_id_number, holder_contact, holder_address, beneficiary_name, beneficiary_id_number) 
@@ -111,4 +126,4 @@ app.post('/api/policies/public-create', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
