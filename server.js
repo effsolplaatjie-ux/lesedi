@@ -88,23 +88,28 @@ app.post('/api/policies/create', authenticateToken, async (req, res) => {
     }
 });
 
-// 3. EMPLOYEE ROUTE (Fixes the 404 in your screenshot)
+// 1. ADD EMPLOYEE (Fixes the 404 in your screenshot)
+app.post('/api/employees/add', authenticateToken, async (req, res) => {
+    const { username, password, role } = req.body;
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        await db.execute(
+            'INSERT INTO users (username, password_hash, role, company_id) VALUES (?, ?, ?, ?)',
+            [username, hash, role || 'staff', req.user.company_id]
+        );
+        res.status(201).json({ message: "Employee added successfully!" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to add employee: " + err.message });
+    }
+});
+
+// 2. GET EMPLOYEES
 app.get('/api/employees', authenticateToken, async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT id, username, role FROM users WHERE company_id = ?', [req.user.company_id]);
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: "Failed to fetch employees" });
-    }
-});
-
-// 4. CLAIMS UPLOAD
-app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-        res.json({ message: "Document uploaded successfully!", filePath: req.file.path });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Fetch failed" });
     }
 });
 
