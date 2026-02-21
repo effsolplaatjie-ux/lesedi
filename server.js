@@ -145,5 +145,27 @@ app.get('/api/policies', authenticateToken, async (req, res) => {
     res.json(rows);
 });
 
+
+
+// --- CLAIMS: UPLOAD DOCUMENT ---
+// Ensure your frontend <input name="claimDoc"> matches upload.single('claimDoc')
+app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No file provided" });
+        
+        const { policy_no } = req.body; // Make sure your form sends policy_no
+
+        // Save reference to the database
+        await db.execute(
+            'INSERT INTO claims (policy_no, file_path) VALUES (?, ?)',
+            [policy_no, req.file.path]
+        );
+
+        res.json({ message: "Claim submitted successfully!", path: req.file.path });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Upload failed: " + err.message });
+    }
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
