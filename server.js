@@ -25,7 +25,6 @@ const db = mysql.createPool({
 // --- TWILIO CONFIG ---
 const client = new twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// Helper to ensure numbers are in +27 format for Twilio
 const formatPhone = (phone) => {
     let cleaned = phone.replace(/\s+/g, '');
     if (cleaned.startsWith('0')) return '+27' + cleaned.substring(1);
@@ -35,7 +34,6 @@ const formatPhone = (phone) => {
 };
 
 // --- AUTHENTICATION MIDDLEWARE ---
-// Moved up so it is defined before routes use it
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -51,7 +49,7 @@ const authenticateToken = (req, res, next) => {
 
 // --- FILE UPLOAD CONFIG ---
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, '/tmp/'), // Use /tmp/ for Render's ephemeral disk
+    destination: (req, file, cb) => cb(null, '/tmp/'), 
     filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage: storage });
@@ -74,16 +72,15 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 2. CREATE POLICY
+// 2. CREATE POLICY (Fixes "beneficiary_contact" default value error)
 app.post('/api/policies/create', authenticateToken, async (req, res) => {
     const { type, hName, hID, hContact, hAddress, bName, bID, bContact, bAddress } = req.body;
-    const companyId = req.user.company_id;
     const policyNo = 'POL-' + Date.now().toString().slice(-6);
     try {
         await db.execute(
             `INSERT INTO policies (company_id, policy_no, policy_type, holder_name, holder_id_number, holder_contact, holder_address, beneficiary_name, beneficiary_id_number, beneficiary_contact, beneficiary_address) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [companyId, policyNo, type, hName, hID, hContact, hAddress, bName, bID, bContact, bAddress]
+            [req.user.company_id, policyNo, type, hName, hID, hContact, hAddress, bName, bID, bContact || '', bAddress || '']
         );
         res.status(201).json({ message: "Policy saved successfully", policy_no: policyNo });
     } catch (err) {
@@ -91,41 +88,17 @@ app.post('/api/policies/create', authenticateToken, async (req, res) => {
     }
 });
 
-// 3. WELCOME SMS (Called after policy creation)
-app.post('/api/sms/welcome', authenticateToken, async (req, res) => {
-    const { hContact, hName } = req.body;
+// 3. EMPLOYEE ROUTE (Fixes the 404 in your screenshot)
+app.get('/api/employees', authenticateToken, async (req, res) => {
     try {
-        await client.messages.create({
-            body: `Welcome to Lesedi Life, ${hName}! Your policy has been successfully activated. Thank you for choosing us.`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: formatPhone(hContact)
-        });
-        res.json({ message: "Welcome SMS sent!" });
+        const [rows] = await db.execute('SELECT id, username, role FROM users WHERE company_id = ?', [req.user.company_id]);
+        res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: "SMS failed: " + err.message });
+        res.status(500).json({ error: "Failed to fetch employees" });
     }
 });
 
-// 4. SMS REMINDER
-app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
-    const { policy_id } = req.body;
-    try {
-        const [rows] = await db.execute('SELECT holder_name, holder_contact, policy_no FROM policies WHERE id = ?', [policy_id]);
-        if (rows.length === 0) return res.status(404).json({ error: "Policy not found" });
-        const p = rows[0];
-        
-        await client.messages.create({
-            body: `Hi ${p.holder_name}, this is a reminder to keep your Lesedi Life policy (${p.policy_no}) up to date.`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: formatPhone(p.holder_contact)
-        });
-        res.json({ message: "Reminder SMS sent!" });
-    } catch (err) {
-        res.status(500).json({ error: "SMS failed: " + err.message });
-    }
-});
-
-// 5. CLAIMS UPLOAD
+// 4. CLAIMS UPLOAD
 app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -135,14 +108,36 @@ app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), asy
     }
 });
 
-// 6. GET POLICIES
-app.get('/api/policies', authenticateToken, async (req, res) => {
+// 5. SMS ROUTES (Welcome & Reminder)
+app.post('/api/sms/welcome', authenticateToken, async (req, res) => {
+    const { hContact, hName } = req.body;
     try {
-        const [rows] = await db.execute('SELECT * FROM policies WHERE company_id = ?', [req.user.company_id]);
-        res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        await client.messages.create({
+            body: `Welcome to Lesedi Life, ${hName}! Your policy is active.`,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            to: formatPhone(hContact)
+        });
+        res.json({ message: "Welcome SMS sent!" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
+    const { policy_id } = req.body;
+    try {
+        const [rows] = await db.execute('SELECT holder_name, holder_contact FROM policies WHERE id = ?', [policy_id]);
+        const p = rows[0];
+        await client.messages.create({
+            body: `Hi ${p.holder_name}, reminder to keep your Lesedi Life policy up to date.`,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            to: formatPhone(p.holder_contact)
+        });
+        res.json({ message: "Reminder sent!" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/policies', authenticateToken, async (req, res) => {
+    const [rows] = await db.execute('SELECT * FROM policies WHERE company_id = ?', [req.user.company_id]);
+    res.json(rows);
 });
 
 const PORT = process.env.PORT || 3000;
