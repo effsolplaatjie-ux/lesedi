@@ -121,6 +121,35 @@ app.get('/api/policies', authenticateToken, async (req, res) => {
     }
 });
 
+
+// --- NEW: BILLING STATUS ROUTE ---
+app.get('/api/billing/status', authenticateToken, async (req, res) => {
+    try {
+        // This assumes you have a 'companies' table with a 'status' column
+        const [rows] = await db.execute(
+            'SELECT subscription_status, last_payment_date FROM companies WHERE id = ?', 
+            [req.user.company_id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: "Company not found" });
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: "Database error: " + err.message });
+    }
+});
+
+// --- NEW: FETCH ALL CLAIMS FOR DASHBOARD ---
+app.get('/api/claims', authenticateToken, async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM claims WHERE policy_no IN (SELECT policy_no FROM policies WHERE company_id = ?)', 
+            [req.user.company_id]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch claims: " + err.message });
+    }
+});
+
 // 4. CLAIMS UPLOAD
 app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
     try {
