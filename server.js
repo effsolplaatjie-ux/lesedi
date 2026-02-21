@@ -147,13 +147,33 @@ app.get('/api/policies', authenticateToken, async (req, res) => {
 
 
 
-// --- CLAIMS: UPLOAD DOCUMENT ---
-// Ensure your frontend <input name="claimDoc"> matches upload.single('claimDoc')
+// --- UPDATED CLAIMS UPLOAD ROUTE ---
 app.post('/api/claims/upload', authenticateToken, upload.single('claimDoc'), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file provided" });
-        
-        const { policy_no } = req.body; // Make sure your form sends policy_no
+        if (!req.file) {
+            return res.status(400).json({ error: "No file selected. Please choose a document." });
+        }
+
+        const { policy_no } = req.body;
+        if (!policy_no) {
+            return res.status(400).json({ error: "Policy number is missing from the request." });
+        }
+
+        // Save the file reference to the new 'claims' table
+        await db.execute(
+            'INSERT INTO claims (policy_no, file_path) VALUES (?, ?)',
+            [policy_no, req.file.path]
+        );
+
+        res.json({ 
+            message: "Claim submitted successfully!", 
+            filePath: req.file.path 
+        });
+    } catch (err) {
+        console.error("Database Error during upload:", err.message);
+        res.status(500).json({ error: "Server failed to save claim: " + err.message });
+    }
+});// Make sure your form sends policy_no
 
         // Save reference to the database
         await db.execute(
