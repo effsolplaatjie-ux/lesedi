@@ -197,5 +197,20 @@ app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Update Policy Payment Status
+app.put('/api/policies/status', authenticateToken, async (req, res) => {
+    const { id, status } = req.body;
+    try {
+        // Ensure the policy belongs to the logged-in company
+        await db.execute(
+            'UPDATE policies SET payment_status = ? WHERE id = ? AND company_id = ?',
+            [status, id, req.user.company_id]
+        );
+        res.json({ message: "Status updated successfully" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
