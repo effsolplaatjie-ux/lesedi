@@ -92,27 +92,27 @@ app.post('/api/policies/create', authenticateToken, async (req, res) => {
     }
 });
 
-// 3. SMS WELCOME ROUTE
-app.post('/api/sms/welcome', authenticateToken, async (req, res) => {
-    const { hContact, hName } = req.body;
-    const msg = `Welcome to Lesedi Life, ${hName}! Your policy has been successfully activated.`;
-    console.log(`Sending Welcome SMS to ${hContact}: ${msg}`);
-    // Add your SMS Provider API logic here
-    res.json({ message: "Welcome SMS Sent" });
-});
+const twilio = require('twilio');
+// Add these variables to your .env file on Render
+const client = new twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// 4. SMS REMINDER ROUTE
 app.post('/api/sms/reminder', authenticateToken, async (req, res) => {
     const { policy_id } = req.body;
     try {
         const [rows] = await db.execute('SELECT holder_name, holder_contact, policy_no FROM policies WHERE id = ?', [policy_id]);
-        if (rows.length === 0) return res.status(404).json({ error: "Policy not found" });
         const p = rows[0];
-        const msg = `Hi ${p.holder_name}, this is a reminder to keep your policy ${p.policy_no} up to date.`;
-        console.log(`Sending Reminder SMS to ${p.holder_contact}: ${msg}`);
-        res.json({ message: "Reminder SMS Sent" });
+        
+        // ACTUAL SENDING LOGIC
+        await client.messages.create({
+            body: `Hi ${p.holder_name}, this is a reminder to keep your Lesedi Life policy (${p.policy_no}) up to date.`,
+            from: process.env.TWILIO_PHONE_NUMBER, // Your Twilio number
+            to: p.holder_contact // Ensure this is in international format (e.g., +27...)
+        });
+
+        res.json({ message: "SMS actually sent to phone!" });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Twilio Error:", err);
+        res.status(500).json({ error: "SMS Gateway failed: " + err.message });
     }
 });
 
